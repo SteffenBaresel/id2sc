@@ -1,0 +1,14 @@
+<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01 Transitional//EN">
+<html><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8">
+<title>$title</title>
+<link href="doxygen.css" rel="stylesheet" type="text/css">
+<link href="tabs.css" rel="stylesheet" type="text/css">
+<style type="text/css" media="screen">
+    body {background-color:white;}
+    body,div,p,dl,.memname, .params, .exception {font: normal normal normal 15px/20px "HelveticaNeue", Helvetica, "Arial Narrow", Arial, sans-serif;}
+    hr:first-child {border:none;}
+    .headertitle {text-align:center;}
+    .summary {display:none;}
+    dl.section {border:none;}
+</style>
+</head><body>

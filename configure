@@ -1,0 +1,197 @@
+#!/bin/bash
+#################################################################
+#                                                               #
+#        SIV.AG Broker Module - kVASy System Control            #
+#                                                               #
+#################################################################
+#
+# Changehistory:
+# 12.2013 - Test Version - Steffen Baresel
+# --------------------------------------------------------------
+
+#
+# Globale Variablen
+#
+
+MODULE_NAME=id2sc
+
+#
+# Allgemeine Funktionen
+#
+
+function help() {
+    echo ""
+    echo " ########################## Hilfe Menü ############################"
+    echo " #                                                                #"
+    echo " # Folgende Parameter können übergeben werden:                    #"
+    echo " #                                                                #"
+    echo " # --zdb_header_path = Pfad zu ZDB Header Files                   #"
+    echo " # --icinga_install_path = Wurzelpfad zu Icinga                   #"
+    echo " #                                                                #"
+    echo " # Hinweis: kein '/' am Ende.                                     #"
+    echo " #                                                                #"
+    echo " ##################################################################"
+    echo ""
+}
+
+function error01() {
+    echo "CRITICAL [No such file or directory]"
+    echo "--- Exiting ---"
+}
+
+function checkicingainstall() {
+    echo -n "Get    -> ICINGA_INSTALL_PATH ... "
+    if [ -x $1 ]; then
+        echo "OK [${1}]"
+    else
+	error01
+        exit 1
+    fi
+}
+
+function checkzdbpath() {
+    echo -n "Get    -> ZDB_HEADER_PATH    ... "
+    if [ -x $1 ]; then
+        echo "OK [${1}]"
+    else
+	error01
+        exit 1
+    fi
+}
+
+function createdirectories() {
+    echo -n "Create -> Directory Structure ... "
+    mkdir ./include
+    mkdir ./bin
+    echo "done!"
+}
+
+function copyinclude() {
+    echo -n "Copy   -> Req. Header Files   ... "
+    cp -f ${1}/include/*.h ./include/
+    echo "done!"
+}
+
+function buildzdb() {
+    echo -n "Build  -> Zdb Header Files    ... "
+    tar -xvzf libzdb-2.12.tar.gz
+    cd libzdb-2.12
+    ./configure --without-mysql --without-sqlite
+    make
+    make install
+    cd ..
+    echo "done!"
+}
+
+function writemakefile() {
+    echo -n "Create -> Makefile            ... "
+    echo -e "###################################" > Makefile
+    echo -e "# Makefile for NEB examples" >> Makefile
+    echo -e "###################################" >> Makefile
+    echo -e "" >> Makefile
+    echo -e "" >> Makefile
+    echo -e "# Source code directories" >> Makefile
+    echo -e "SRC_INCLUDE=./include" >> Makefile
+    echo -e "" >> Makefile
+    echo -e "CC=gcc" >> Makefile
+    echo -e "MOD_CFLAGS=-fPIC" >> Makefile
+    echo -e "CFLAGS=-Wall -g -O2 -DHAVE_CONFIG_H" >> Makefile
+    echo -e "MOD_LDFLAGS=-shared -L/usr/local/lib" >> Makefile
+    echo -e "LDFLAGS=-lzdb" >> Makefile
+    echo -e "LIBS=-I${2}" >> Makefile
+    echo -e "MATHLIBS=-lm" >> Makefile
+    echo -e "" >> Makefile
+    echo -e "prefix=/usr/local/icinga" >> Makefile
+    echo -e "exec_prefix=\${prefix}" >> Makefile
+    echo -e "BINDIR=\${exec_prefix}/bin" >> Makefile
+    echo -e "LIBDIR=\${exec_prefix}/lib" >> Makefile
+    echo -e "INSTALL=/usr/bin/install -c" >> Makefile
+    echo -e "INSTALL_OPTS=-o icinga -g icinga" >> Makefile
+    echo -e "COMMAND_OPTS=-o icinga -g icinga" >> Makefile
+    echo -e "STRIP=/usr/bin/strip" >> Makefile
+    echo -e "" >> Makefile
+    echo -e "CP=@CP@" >> Makefile
+    echo -e "" >> Makefile
+    echo -e "###############################" >> Makefile
+    echo -e "# Debug" >> Makefile
+    echo -e "###############################" >> Makefile
+    echo -e "ENABLE_DEBUG=no" >> Makefile
+    echo -e "" >> Makefile
+    echo -e "# Compiler flags for use with Valgrind - set when debug is enabled" >> Makefile
+    echo -e "ifeq ('\$(ENABLE_DEBUG)', 'yes')" >> Makefile
+    echo -e "\tCFLAGS=-O0 -g" >> Makefile
+    echo -e "endif" >> Makefile
+    echo -e "" >> Makefile
+    echo -e "all: ${MODULE_NAME}.so" >> Makefile
+    echo -e "" >> Makefile
+    echo -e "${MODULE_NAME}.so: ./src/${MODULE_NAME}.c" >> Makefile
+    echo -e "\t\$(CC) \$(MOD_CFLAGS) \$(CFLAGS) -o ./bin/${MODULE_NAME}.so ./src/${MODULE_NAME}.c \$(MOD_LDFLAGS) \$(LDFLAGS) \$(LIBS) \$(MATHLIBS)" >> Makefile
+    echo -e "" >> Makefile
+    echo -e "clean:" >> Makefile
+    echo -e "\trm -f ${MODULE_NAME}.o" >> Makefile
+    echo -e "\trm -f core *.o *.so" >> Makefile
+    echo -e "\trm -f *~ *.*~" >> Makefile
+    echo -e "\trm -Rf ./include ./bin" >> Makefile
+    echo -e "\trm Makefile" >> Makefile
+    echo -e "" >> Makefile
+    echo -e "distclean: clean" >> Makefile
+    echo -e "\trm -f Makefile" >> Makefile
+    echo -e "" >> Makefile
+    echo -e "devclean: distclean" >> Makefile
+    echo -e "" >> Makefile
+    echo -e "install:" >> Makefile
+    echo -e "\tcp -f ./bin/${MODULE_NAME}.so ${1}/bin/" >> Makefile
+    echo "done!"
+}
+
+#
+# Werte Commandline Parameter aus
+#
+
+EXIT=1
+ZDB_HEADER_PATH=0
+ICINGA_INSTALL_PATH=0
+
+for i in "$@"; do
+    case $i in
+        -p=*|--zdb_header_path=*)
+	    echo -n "Set    -> ZDB_HEADER_PATH     ..."
+	    ZDB_HEADER_PATH_VAL="${i#*=}"
+	    echo " done!"
+	    ZDB_HEADER_PATH=1
+	    EXIT=0
+	    ;;
+	-b=*|--icinga_install_path=*)
+	    echo -n "Set    -> ICINGA_INSTALL_PATH ..."
+	    ICINGA_INSTALL_PATH_VAL="${i#*=}"
+	    echo " done!"
+	    ICINGA_INSTALL_PATH=1
+	    EXIT=0
+	    ;;
+	*)
+	    EXIT=1
+	    ;;
+    esac
+done
+
+#
+# Ausführungen
+#
+
+if [ $EXIT -eq 1 ]; then
+    help
+    exit 1
+fi
+
+if [ $ZDB_HEADER_PATH -eq 1 ] && [ $ICINGA_INSTALL_PATH -eq 1 ]; then
+    buildzdb
+    checkzdbpath ${ZDB_HEADER_PATH_VAL}
+    checkicingainstall ${ICINGA_INSTALL_PATH_VAL}
+    writemakefile ${ICINGA_INSTALL_PATH_VAL}
+else
+    help
+fi
+
+#
+# Ende
+#
