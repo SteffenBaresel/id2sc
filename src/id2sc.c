@@ -66,10 +66,14 @@ int process_config_file(char *);
 char *pgurl = NULL;
 char *idname = NULL;
 char *lgfile = NULL;
+char *identifier = NULL;
+char *debug = NULL;
 
 ConnectionPool_T pool;
 URL_T url_t;
 Connection_T con;
+
+int instid = 0;
 
 int dump_customvar_status = IDO_FALSE;
 
@@ -127,19 +131,47 @@ int nebmodule_init(int flags, char *args, nebmodule *handle) {
 		return -1;
 	}
 
-	/* open connection pool to postgresl */
-
-	url_t = URL_new(pgurl);
-	pool = ConnectionPool_new(url_t);
-	ConnectionPool_start(pool);
-
 	/* register to be notified of certain events... */
 	
-	neb_register_callback(NEBCALLBACK_AGGREGATED_STATUS_DATA, id2sc_module_handle, 0, id2sc_handle_data);
 	neb_register_callback(NEBCALLBACK_SERVICE_STATUS_DATA, id2sc_module_handle, 0, id2sc_handle_data);
 	neb_register_callback(NEBCALLBACK_HOST_STATUS_DATA, id2sc_module_handle, 0, id2sc_handle_data);
 	neb_register_callback(NEBCALLBACK_PROGRAM_STATUS_DATA, id2sc_module_handle, 0, id2sc_handle_data);
 	neb_register_callback(NEBCALLBACK_STATE_CHANGE_DATA, id2sc_module_handle, 0, id2sc_handle_data);
+
+	url_t = URL_new(pgurl);
+	pool = ConnectionPool_new(url_t);
+	ConnectionPool_setInitialConnections(pool, 10);
+	ConnectionPool_setMaxConnections(pool, 50);
+	ConnectionPool_setConnectionTimeout(pool, 4);
+	ConnectionPool_setReaper(pool, 4);
+	ConnectionPool_start(pool);
+	
+	/* Register Instance if not exist */
+	
+	con = ConnectionPool_getConnection(pool);
+	TRY {
+	    PreparedStatement_T pre = Connection_prepareStatement(con, "SELECT instid FROM monitoring_info_instance WHERE instna=? AND identifier=?");
+	    PreparedStatement_setString(pre, 1, idname);
+	    PreparedStatement_setString(pre, 2, identifier);
+	    ResultSet_T instance = PreparedStatement_executeQuery(pre);
+	    if (ResultSet_next(instance)) {
+		instid = ResultSet_getIntByName(instance, "instid");
+	    } else {
+		PreparedStatement_T ins = Connection_prepareStatement(con, "INSERT INTO monitoring_info_instance(INSTNA,IDENTIFIER) VALUES (?,?)");
+		PreparedStatement_setString(ins, 1, idname);
+		PreparedStatement_setString(ins, 2, identifier);
+		PreparedStatement_execute(ins);
+	    }
+	} CATCH(SQLException) {
+	    snprintf(temp_buffer, sizeof(temp_buffer) - 1, "id2sc: SQLException - %s\n", Exception_frame.message);
+	    temp_buffer[sizeof(temp_buffer)-1] = '\x0';
+	    write_to_all_logs(temp_buffer, NSLOG_INFO_MESSAGE);
+	} FINALLY {
+	    Connection_close(con);
+	} END_TRY;
+	
+	
+	
 
 	return 0;
 }
@@ -150,17 +182,18 @@ int nebmodule_deinit(int flags, int reason) {
 	char temp_buffer[MAX_BUFLEN];
 
 	/* deregister for all events we previously registered for... */
-	neb_deregister_callback(NEBCALLBACK_AGGREGATED_STATUS_DATA, id2sc_handle_data);
 	neb_deregister_callback(NEBCALLBACK_SERVICE_STATUS_DATA, id2sc_handle_data);
 	neb_deregister_callback(NEBCALLBACK_HOST_STATUS_DATA, id2sc_handle_data);
 	neb_deregister_callback(NEBCALLBACK_PROGRAM_STATUS_DATA, id2sc_handle_data);
 	neb_deregister_callback(NEBCALLBACK_STATE_CHANGE_DATA, id2sc_handle_data);
 
+
 	/* log a message to the Icinga log file */
 	snprintf(temp_buffer, sizeof(temp_buffer) - 1, "id2sc: shutdown completed\n");
 	temp_buffer[sizeof(temp_buffer)-1] = '\x0';
 	write_to_all_logs(temp_buffer, NSLOG_INFO_MESSAGE);
-
+	
+	ConnectionPool_stop(pool);
 	ConnectionPool_free(&pool);
 	URL_free(&url_t);
 
@@ -183,7 +216,6 @@ void id2sc_reminder_message(char *message) {
 
 /* handle data from Icinga daemon */
 int id2sc_handle_data(int event_type, void *data) {
-	nebstruct_aggregated_status_data *agsdata = NULL;
 	nebstruct_service_status_data *ssdata = NULL;
 	nebstruct_host_status_data *hsdata = NULL;
 	nebstruct_program_status_data *psdata = NULL;
@@ -192,39 +224,13 @@ int id2sc_handle_data(int event_type, void *data) {
 	host *temp_host = NULL;
 	char temp_buffer[8192];
 	char *es[9];
-	double retry_interval = 0.0;
 	int last_state = -1;
 	int last_hard_state = -1;
-	ResultSet_T r;
 //	int x = 0;
 //	customvariablesmember *temp_customvar = NULL;
 
 	/* what type of event/data do we have? */
 	switch (event_type) {
-
-	case NEBCALLBACK_AGGREGATED_STATUS_DATA:
-
-		if ((agsdata = (nebstruct_aggregated_status_data *)data)) {
-
-			snprintf(temp_buffer, sizeof(temp_buffer) - 1, "AGGREGATED_STATUS: %d:%d:%d\n",
-			    agsdata->type,
-			    agsdata->flags,
-			    agsdata->attr
-			);
-			temp_buffer[sizeof(temp_buffer)-1] = '\x0';
-			id2sc_write_to_log(temp_buffer);
-		}
-
-		con = ConnectionPool_getConnection(pool);
-		r = Connection_executeQuery(con, "select * from info_system");
-		while (ResultSet_next(r)) {
-		    snprintf(temp_buffer, sizeof(temp_buffer) - 1, "SQL: %s\n", ResultSet_getString(r, 1));
-		    temp_buffer[sizeof(temp_buffer)-1] = '\x0';
-		    id2sc_write_to_log(temp_buffer);
-		}
-		Connection_close(con);
-
-		break;
 
 	case NEBCALLBACK_SERVICE_STATUS_DATA:
 
@@ -236,9 +242,7 @@ int id2sc_handle_data(int event_type, void *data) {
 		    es[2] = escape_buffer(temp_service->plugin_output);
 		    es[3] = escape_buffer(temp_service->long_plugin_output);
 		    es[4] = escape_buffer(temp_service->perf_data);
-		    es[5] = escape_buffer(temp_service->event_handler);
-		    es[6] = escape_buffer(temp_service->service_check_command);
-		    es[7] = escape_buffer(temp_service->check_period);
+		    es[5] = escape_buffer(temp_service->check_period);
 
 		    if(es[3] != NULL) {
 			if(strlen(es[3]) > MAX_TEXT_LEN) {
@@ -252,146 +256,155 @@ int id2sc_handle_data(int event_type, void *data) {
 			}
 		    }
 
-		    snprintf(temp_buffer, MAX_BUFLEN - 1
-		         , "SERVICE_STATUS: %d:%d:%d:%ld:%ld:%s:%s:%s:%s:%s:%d:%d:%d:%d:%d:%lu:%lu:%d:%lu:%lu:%d:%lu:%lu:%lu:%lu:%d:%lu:%lu:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%.5lf:%.5lf:%.5lf:%d:%d:%d:%d:%lu:%s:%s:%lf:%lf:%s\n"
-		         , ssdata->type
-		         , ssdata->flags
-		         , ssdata->attr
-		         , ssdata->timestamp.tv_sec
-		         , ssdata->timestamp.tv_usec
-		         , (es[0] == NULL) ? "" : es[0]
-		         , (es[1] == NULL) ? "" : es[1]
-		         , (es[2] == NULL) ? "" : es[2]
-		         , (es[3] == NULL) ? "" : es[3]
-		         , (es[4] == NULL) ? "" : es[4]
-		         , temp_service->current_state
-		         , temp_service->has_been_checked
-		         , temp_service->should_be_scheduled
-		         , temp_service->current_attempt
-		         , temp_service->max_attempts
-		         , (unsigned long)temp_service->last_check
-		         , (unsigned long)temp_service->next_check
-		         , temp_service->check_type
-		         , (unsigned long)temp_service->last_state_change
-		         , (unsigned long)temp_service->last_hard_state_change
-		         , temp_service->last_hard_state
-		         , (unsigned long)temp_service->last_time_ok
-		         , (unsigned long)temp_service->last_time_warning
-		         , (unsigned long)temp_service->last_time_unknown
-		         , (unsigned long)temp_service->last_time_critical
-		         , temp_service->state_type
-		         , (unsigned long)temp_service->last_notification
-		         , (unsigned long)temp_service->next_notification
-		         , temp_service->no_more_notifications
-		         , temp_service->notifications_enabled
-		         , temp_service->problem_has_been_acknowledged
-		         , temp_service->acknowledgement_type
-		         , temp_service->current_notification_number
-		         , temp_service->accept_passive_service_checks
-		         , temp_service->event_handler_enabled
-		         , temp_service->checks_enabled
-		         , temp_service->flap_detection_enabled
-		         , temp_service->is_flapping
-		         , temp_service->percent_state_change
-		         , temp_service->latency
-		         , temp_service->execution_time
-		         , temp_service->scheduled_downtime_depth
-		         , temp_service->failure_prediction_enabled
-		         , temp_service->process_performance_data
-		         , temp_service->obsess_over_service
-		         , temp_service->modified_attributes
-		         , (es[5] == NULL) ? "" : es[5]
-		         , (es[6] == NULL) ? "" : es[6]
-		         , (double)temp_service->check_interval
-		         , (double)temp_service->retry_interval
-		         , (es[7] == NULL) ? "" : es[7]
-		        );
-
-		    temp_buffer[sizeof(temp_buffer)-1] = '\x0';
-
-		    /* dump customvars status */
-/*		    if (dump_customvar_status == IDO_TRUE) {
-			for (temp_customvar = temp_service->custom_variables; temp_customvar != NULL; temp_customvar = temp_customvar->next) {
-
-			    for (x = 0; x < 2; x++) {
-				free(es[x]);
-				es[x] = NULL;
-			    }
-
-			    es[0] = id2sc_escape_buffer(temp_customvar->variable_name);
-			    es[1] = id2sc_escape_buffer(temp_customvar->variable_value);
-
-			    snprintf(temp_buffer, MAX_BUFLEN - 1
-				 , "%d=%s:%d:%s\n"
-				 , IDO_DATA_CUSTOMVARIABLESTATUS
-				 , (es[0] == NULL) ? "" : es[0]
-				 , temp_customvar->has_been_modified
-				 , (es[1] == NULL) ? "" : es[1]
-			    );
-
-			    temp_buffer[sizeof(temp_buffer)-1] = '\x0';
+		    con = ConnectionPool_getConnection(pool);
+		    TRY {
+			int hstid=0000;
+			int srvid=0000;
+			int timestamp = (int)time(NULL);
+			/* Host */
+			PreparedStatement_T shsd = Connection_prepareStatement(con, "SELECT hstid FROM monitoring_info_host WHERE instid=? AND hstln=?");
+			PreparedStatement_setInt(shsd, 1, instid);
+			PreparedStatement_setString(shsd, 2, es[0]);
+			ResultSet_T instance1 = PreparedStatement_executeQuery(shsd);
+			if (ResultSet_next(instance1)) {
+			    hstid = ResultSet_getIntByName(instance1, "hstid");
+			} else {
+			    break;
 			}
+			/* Service */
+			PreparedStatement_T shsrvd = Connection_prepareStatement(con, "SELECT srvid FROM monitoring_info_service WHERE instid=? AND hstid=? AND srvna=?");
+			PreparedStatement_setInt(shsrvd, 1, instid);
+			PreparedStatement_setInt(shsrvd, 2, hstid);
+			PreparedStatement_setString(shsrvd, 3, es[1]);
+			ResultSet_T instance2 = PreparedStatement_executeQuery(shsrvd);
+			if (ResultSet_next(instance2)) {
+			    srvid = ResultSet_getIntByName(instance2, "srvid");
+			} else {
+			    /* Insert Service Entry */
+			    PreparedStatement_T ihsrvd = Connection_prepareStatement(con, "INSERT INTO monitoring_info_service(HSTID,SRVNA,DSC,INSTID,CHECK_PERIOD,CREATED) VALUES (?,?,?,?,?,?)");
+			    PreparedStatement_setInt(ihsrvd, 1, hstid);
+			    PreparedStatement_setString(ihsrvd, 2, es[1]);
+			    PreparedStatement_setString(ihsrvd, 3, "-");
+			    PreparedStatement_setInt(ihsrvd, 4, instid);
+			    PreparedStatement_setString(ihsrvd, 5, es[5]);
+			    PreparedStatement_setInt(ihsrvd, 6, timestamp);
+			    PreparedStatement_execute(ihsrvd);
+			    /* Select Service ID */
+			    PreparedStatement_T shsrvd2 = Connection_prepareStatement(con, "SELECT srvid FROM monitoring_info_service WHERE instid=? AND hstid=? AND srvna=?");
+			    PreparedStatement_setInt(shsrvd2, 1, instid);
+			    PreparedStatement_setInt(shsrvd2, 2, hstid);
+			    PreparedStatement_setString(shsrvd2, 3, es[1]);
+			    ResultSet_T instance22 = PreparedStatement_executeQuery(shsrvd2);
+			    if (ResultSet_next(instance22)) {
+				srvid = ResultSet_getIntByName(instance22, "srvid");
+			    }
+			}
+			/* Update Status Table */
+			PreparedStatement_T smise = Connection_prepareStatement(con, "SELECT sid FROM monitoring_status WHERE srvid=? AND created=?");
+			PreparedStatement_setInt(smise, 1, srvid);
+			PreparedStatement_setInt(smise, 2, timestamp);
+			ResultSet_T instance3 = PreparedStatement_executeQuery(smise);
+			if (ResultSet_next(instance3)) {
+			    /* nothing */
+			} else {
+			    PreparedStatement_T ihpd = Connection_prepareStatement(con, "INSERT INTO monitoring_status(SRVID,OUTPUT,LONG_OUTPUT,CURRENT_STATE,LAST_STATE,LAST_CHECK,NEXT_CHECK,CREATED) VALUES (?,?,?,?,?,?,?,?)");
+			    PreparedStatement_setInt(ihpd, 1, srvid);
+			    PreparedStatement_setString(ihpd, 2, es[2]);
+			    PreparedStatement_setString(ihpd, 3, es[3]);
+			    PreparedStatement_setInt(ihpd, 4, temp_service->current_state);
+			    PreparedStatement_setInt(ihpd, 5, temp_service->last_state);
+			    PreparedStatement_setInt(ihpd, 6, temp_service->last_check);
+			    PreparedStatement_setInt(ihpd, 7, temp_service->next_check);
+			    PreparedStatement_setInt(ihpd, 8, timestamp);
+			    PreparedStatement_execute(ihpd);
+			}
+			/* Get Durations */
+			int next_check=0;
+			switch (temp_service->next_check) {
+			    case 0:
+				next_check = timestamp;
+				break;
+			    default:
+				next_check = temp_service->next_check;
+				break;
+			}
+			int timeok=0; int timewa=0; int timecr=0; int timeun=0;
+			switch (temp_service->current_state) {
+			    case 0:
+				timeok = next_check - temp_service->last_check;
+				break;
+			    case 1:
+				timewa = next_check - temp_service->last_check;
+				break;
+			    case 2:
+				timecr = next_check - temp_service->last_check;
+				break;
+			    case 3:
+				timeun = next_check - temp_service->last_check;
+				break;
+			    default:
+				break;
+			}
+			/* Update Availability Table */
+			PreparedStatement_T smase = Connection_prepareStatement(con, "SELECT aid FROM monitoring_availability WHERE srvid=? AND created=?");
+			PreparedStatement_setInt(smase, 1, srvid);
+			PreparedStatement_setInt(smase, 2, timestamp);
+			ResultSet_T instance4 = PreparedStatement_executeQuery(smase);
+			if (ResultSet_next(instance4)) {
+			    /* nothing temp_service->last_check */
+			} else {
+			    PreparedStatement_T ihad = Connection_prepareStatement(con, "INSERT INTO monitoring_availability(SRVID,TIMEOK,TIMEWA,TIMECR,TIMEUN,CREATED) VALUES (?,?,?,?,?,?)");
+			    PreparedStatement_setInt(ihad, 1, srvid);
+			    PreparedStatement_setInt(ihad, 2, timeok);
+			    PreparedStatement_setInt(ihad, 3, timewa);
+			    PreparedStatement_setInt(ihad, 4, timecr);
+			    PreparedStatement_setInt(ihad, 5, timeun);
+			    PreparedStatement_setInt(ihad, 6, timestamp);
+			    PreparedStatement_execute(ihad);
+			}
+		    } CATCH(SQLException) {
+			snprintf(temp_buffer, sizeof(temp_buffer) - 1, "id2sc: NEBCALLBACK_SERVICE_STATUS_DATA SQLException - %s\n", Exception_frame.message);
+			temp_buffer[sizeof(temp_buffer)-1] = '\x0';
+			write_to_all_logs(temp_buffer, NSLOG_INFO_MESSAGE);
+		    } FINALLY {
+			    Connection_close(con);
+		    } END_TRY;
+
+		    if (!strcmp(debug, "on")) {
+			snprintf(temp_buffer, sizeof(temp_buffer) - 1, "SERVICE_STATUS: %s :: %s :: %s :: %s\n", es[0], es[1], es[2], es[4]);
+			temp_buffer[sizeof(temp_buffer)-1] = '\x0';
+			id2sc_write_to_log(temp_buffer);
 		    }
 
-		    snprintf(temp_buffer, MAX_BUFLEN - 1
-			 , "%d\n\n"
-			 , IDO_API_ENDDATA
-		    );
-
-		    temp_buffer[sizeof(temp_buffer)-1] = '\x0';
-*/
-		    id2sc_write_to_log(temp_buffer);
-
 		}
-
-		con = ConnectionPool_getConnection(pool);
-		r = Connection_executeQuery(con, "select * from info_system");
-		while (ResultSet_next(r)) {
-		    snprintf(temp_buffer, sizeof(temp_buffer) - 1, "SQL: %s\n", ResultSet_getString(r, 1));
-		    temp_buffer[sizeof(temp_buffer)-1] = '\x0';
-		    id2sc_write_to_log(temp_buffer);
-		}
-		Connection_close(con);
 
 		break;
 
 	case NEBCALLBACK_PROGRAM_STATUS_DATA:
 
 		if ((psdata = (nebstruct_program_status_data *)data)) {
-		    es[0] = escape_buffer(psdata->global_host_event_handler);
-		    es[1] = escape_buffer(psdata->global_service_event_handler);
 
-		    snprintf(temp_buffer, MAX_BUFLEN - 1
-		         , "PROGRAM_STATUS: %d:%d:%d:%ld:%ld:%lu:%d:%d:%lu:%lu:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%lu:%lu:%s:%s\n"
-		         , psdata->type
-		         , psdata->flags
-		         , psdata->attr
-		         , psdata->timestamp.tv_sec
-		         , psdata->timestamp.tv_usec
-		         , (unsigned long)psdata->program_start
-		         , psdata->pid
-		         , psdata->daemon_mode
-		         , (unsigned long)psdata->last_command_check
-		         , (unsigned long)psdata->last_log_rotation
-		         , psdata->notifications_enabled
-		         , psdata->active_service_checks_enabled
-		         , psdata->passive_service_checks_enabled
-		         , psdata->active_host_checks_enabled
-		         , psdata->passive_host_checks_enabled
-		         , psdata->event_handlers_enabled
-		         , psdata->flap_detection_enabled
-		         , psdata->failure_prediction_enabled
-		         , psdata->process_performance_data
-		         , psdata->obsess_over_hosts
-		         , psdata->obsess_over_services
-		         , psdata->modified_host_attributes
-		         , psdata->modified_service_attributes
-		         , (es[0] == NULL) ? "" : es[0]
-		         , (es[1] == NULL) ? "" : es[1]
-		        );
+		    con = ConnectionPool_getConnection(pool);
+		    TRY {
+			PreparedStatement_T iupd = Connection_prepareStatement(con, "UPDATE monitoring_info_instance SET last_active = ?, startup = ?, pid = ?");
+			PreparedStatement_setInt(iupd, 1, psdata->timestamp.tv_sec);
+			PreparedStatement_setInt(iupd, 2, (unsigned long)psdata->program_start);
+			PreparedStatement_setInt(iupd, 3, psdata->pid);
+			PreparedStatement_execute(iupd);
+		    } CATCH(SQLException) {
+			snprintf(temp_buffer, sizeof(temp_buffer) - 1, "id2sc: NEBCALLBACK_PROGRAM_STATUS_DATA SQLException - %s\n", Exception_frame.message);
+			temp_buffer[sizeof(temp_buffer)-1] = '\x0';
+			write_to_all_logs(temp_buffer, NSLOG_INFO_MESSAGE);
+		    } FINALLY {
+			Connection_close(con);
+		    } END_TRY;
 
-		    temp_buffer[sizeof(temp_buffer)-1] = '\x0';
-		    id2sc_write_to_log(temp_buffer);
+		    if (!strcmp(debug, "on")) {
+			snprintf(temp_buffer, sizeof(temp_buffer) - 1, "PROGRAM_STATUS: %d :: %d :: %d\n", (int)psdata->timestamp.tv_sec, (int)psdata->program_start, (int)psdata->pid);
+			temp_buffer[sizeof(temp_buffer)-1] = '\x0';
+			id2sc_write_to_log(temp_buffer);
+		    }
+
 		}
 
 		break;
@@ -405,9 +418,8 @@ int id2sc_handle_data(int event_type, void *data) {
 		    es[1] = escape_buffer(temp_host->plugin_output);
 		    es[2] = escape_buffer(temp_host->long_plugin_output);
 		    es[3] = escape_buffer(temp_host->perf_data);
-		    es[4] = escape_buffer(temp_host->event_handler);
-		    es[5] = escape_buffer(temp_host->host_check_command);
-		    es[6] = escape_buffer(temp_host->check_period);
+		    es[4] = escape_buffer(temp_host->check_period);
+		    es[5] = escape_buffer(temp_host->address);
 
 		    if(es[2] != NULL) {
 			if(strlen(es[2]) > MAX_TEXT_LEN) {
@@ -421,95 +433,151 @@ int id2sc_handle_data(int event_type, void *data) {
 			}
 		    }
 
-		    retry_interval = temp_host->retry_interval;
+		    con = ConnectionPool_getConnection(pool);
+		    TRY {
+			int hstid=0000;
+			int srvid=0000;
+			int timestamp = (int)time(NULL);
+			/* Host */
+			PreparedStatement_T shsd = Connection_prepareStatement(con, "SELECT hstid FROM monitoring_info_host WHERE instid=? AND hstln=? AND ipaddr=?");
+			PreparedStatement_setInt(shsd, 1, instid);
+			PreparedStatement_setString(shsd, 2, es[0]);
+			PreparedStatement_setString(shsd, 3, es[5]);
+			ResultSet_T instance1 = PreparedStatement_executeQuery(shsd);
+			if (ResultSet_next(instance1)) {
+			    hstid = ResultSet_getIntByName(instance1, "hstid");
+			} else {
+			    /* Insert Host Entry */
+			    PreparedStatement_T ihsd = Connection_prepareStatement(con, "INSERT INTO monitoring_info_host(HSTLN,IPADDR,HTYPID,DSC,INSTID,CHECK_PERIOD,CREATED) VALUES (?,?,?,?,?,?,?)");
+			    PreparedStatement_setString(ihsd, 1, es[0]);
+			    PreparedStatement_setString(ihsd, 2, es[5]);
+			    PreparedStatement_setInt(ihsd, 3, 1);
+			    PreparedStatement_setString(ihsd, 4, "-");
+			    PreparedStatement_setInt(ihsd, 5, instid);
+			    PreparedStatement_setString(ihsd, 6, es[4]);
+			    PreparedStatement_setInt(ihsd, 7, timestamp);
+			    PreparedStatement_execute(ihsd);
+			    /* Select Host ID */
+			    PreparedStatement_T shsd2 = Connection_prepareStatement(con, "SELECT hstid FROM monitoring_info_host WHERE instid=? AND hstln=? AND ipaddr=?");
+			    PreparedStatement_setInt(shsd2, 1, instid);
+			    PreparedStatement_setString(shsd2, 2, es[0]);
+			    PreparedStatement_setString(shsd2, 3, es[5]);
+			    ResultSet_T instance12 = PreparedStatement_executeQuery(shsd2);
+			    if (ResultSet_next(instance12)) {
+				hstid = ResultSet_getIntByName(instance12, "hstid");
+			    }
+			}
+			/* Host Service */
+			PreparedStatement_T shsrvd = Connection_prepareStatement(con, "SELECT srvid FROM monitoring_info_service WHERE instid=? AND hstid=? AND srvna=?");
+			PreparedStatement_setInt(shsrvd, 1, instid);
+			PreparedStatement_setInt(shsrvd, 2, hstid);
+			PreparedStatement_setString(shsrvd, 3, "SYSTEM_ICMP_REQUEST");
+			ResultSet_T instance2 = PreparedStatement_executeQuery(shsrvd);
+			if (ResultSet_next(instance2)) {
+			    srvid = ResultSet_getIntByName(instance2, "srvid");
+			} else {
+			    /* Insert Host Service Entry */
+			    PreparedStatement_T ihsrvd = Connection_prepareStatement(con, "INSERT INTO monitoring_info_service(HSTID,SRVNA,DSC,INSTID,CHECK_PERIOD,CREATED) VALUES (?,?,?,?,?,?)");
+			    PreparedStatement_setInt(ihsrvd, 1, hstid);
+			    PreparedStatement_setString(ihsrvd, 2, "SYSTEM_ICMP_REQUEST");
+			    PreparedStatement_setString(ihsrvd, 3, "-");
+			    PreparedStatement_setInt(ihsrvd, 4, instid);
+			    PreparedStatement_setString(ihsrvd, 5, es[4]);
+			    PreparedStatement_setInt(ihsrvd, 6, timestamp);
+			    PreparedStatement_execute(ihsrvd);
+			    /* Select Host Service ID */
+			    PreparedStatement_T shsrvd2 = Connection_prepareStatement(con, "SELECT srvid FROM monitoring_info_service WHERE instid=? AND hstid=? AND srvna=?");
+			    PreparedStatement_setInt(shsrvd2, 1, instid);
+			    PreparedStatement_setInt(shsrvd2, 2, hstid);
+			    PreparedStatement_setString(shsrvd2, 3, "SYSTEM_ICMP_REQUEST");
+			    ResultSet_T instance22 = PreparedStatement_executeQuery(shsrvd2);
+			    if (ResultSet_next(instance22)) {
+				srvid = ResultSet_getIntByName(instance22, "srvid");
+			    }
+			}
+			/* Update Status Table */
+			PreparedStatement_T smise = Connection_prepareStatement(con, "SELECT sid FROM monitoring_status WHERE srvid=? AND created=?");
+			PreparedStatement_setInt(smise, 1, srvid);
+			PreparedStatement_setInt(smise, 2, timestamp);
+			ResultSet_T instance3 = PreparedStatement_executeQuery(smise);
+			if (ResultSet_next(instance3)) {
+			    /* nothing */
+			} else {
+			    PreparedStatement_T ihpd = Connection_prepareStatement(con, "INSERT INTO monitoring_status(SRVID,OUTPUT,LONG_OUTPUT,CURRENT_STATE,LAST_STATE,LAST_CHECK,NEXT_CHECK,CREATED) VALUES (?,?,?,?,?,?,?,?)");
+			    PreparedStatement_setInt(ihpd, 1, srvid);
+			    PreparedStatement_setString(ihpd, 2, es[1]);
+			    PreparedStatement_setString(ihpd, 3, es[2]);
+			    PreparedStatement_setInt(ihpd, 4, temp_host->current_state);
+			    PreparedStatement_setInt(ihpd, 5, temp_host->last_state);
+			    PreparedStatement_setInt(ihpd, 6, temp_host->last_check);
+			    PreparedStatement_setInt(ihpd, 7, temp_host->next_check);
+			    PreparedStatement_setInt(ihpd, 8, timestamp);
+			    PreparedStatement_execute(ihpd);
+			}
+			/* Get Durations */
+			int next_check=0;
+			switch (temp_host->next_check) {
+			    case 0:
+				next_check = timestamp;
+				break;
+			    default:
+				next_check = temp_host->next_check;
+				break;
+			}
+			int timeok=0; int timewa=0; int timecr=0; int timeun=0;
+			switch (temp_host->current_state) {
+			    case 0:
+				timeok = next_check - temp_host->last_check;
+				break;
+			    case 1:
+				timecr = next_check - temp_host->last_check;
+				break;
+			    case 2:
+				timeun = next_check - temp_host->last_check;
+				break;
+			    default:
+				break;
+			}
+			/* Update Availability Table */
+			PreparedStatement_T smase = Connection_prepareStatement(con, "SELECT aid FROM monitoring_availability WHERE srvid=? AND created=?");
+			PreparedStatement_setInt(smase, 1, srvid);
+			PreparedStatement_setInt(smase, 2, timestamp);
+			ResultSet_T instance4 = PreparedStatement_executeQuery(smase);
+			if (ResultSet_next(instance4)) {
+			    /* nothing temp_host->last_check */
+			} else {
+			    PreparedStatement_T ihad = Connection_prepareStatement(con, "INSERT INTO monitoring_availability(SRVID,TIMEOK,TIMEWA,TIMECR,TIMEUN,CREATED) VALUES (?,?,?,?,?,?)");
+			    PreparedStatement_setInt(ihad, 1, srvid);
+			    PreparedStatement_setInt(ihad, 2, timeok);
+			    PreparedStatement_setInt(ihad, 3, timewa);
+			    PreparedStatement_setInt(ihad, 4, timecr);
+			    PreparedStatement_setInt(ihad, 5, timeun);
+			    PreparedStatement_setInt(ihad, 6, timestamp);
+			    PreparedStatement_execute(ihad);
+			}
+		    } CATCH(SQLException) {
+			snprintf(temp_buffer, sizeof(temp_buffer) - 1, "id2sc: NEBCALLBACK_HOST_STATUS_DATA SQLException - %s\n", Exception_frame.message);
+			temp_buffer[sizeof(temp_buffer)-1] = '\x0';
+			write_to_all_logs(temp_buffer, NSLOG_INFO_MESSAGE);
+		    } FINALLY {
+			    Connection_close(con);
+		    } END_TRY;
 
-		    snprintf(temp_buffer, MAX_BUFLEN - 1
-		         , "HOST_STATUS: %d:%d:%d:%ld:%ld:%s:%s:%s:%s:%d:%d:%d:%d:%d:%lu:%lu:%d:%lu:%lu:%d:%lu:%lu:%lu:%d:%lu:%lu:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%.5lf:%.5lf:%.5lf:%d:%d:%d:%d:%lu:%s:%s:%lf:%lf:%s\n"
-		         , hsdata->type
-		         , hsdata->flags
-		         , hsdata->attr
-		         , hsdata->timestamp.tv_sec
-		         , hsdata->timestamp.tv_usec
-		         , (es[0] == NULL) ? "" : es[0]
-		         , (es[1] == NULL) ? "" : es[1]
-		         , (es[2] == NULL) ? "" : es[2]
-		         , (es[3] == NULL) ? "" : es[3]
-		         , temp_host->current_state
-		         , temp_host->has_been_checked
-		         , temp_host->should_be_scheduled
-		         , temp_host->current_attempt
-		         , temp_host->max_attempts
-		         , (unsigned long)temp_host->last_check
-		         , (unsigned long)temp_host->next_check
-		         , temp_host->check_type
-		         , (unsigned long)temp_host->last_state_change
-		         , (unsigned long)temp_host->last_hard_state_change
-		         , temp_host->last_hard_state
+/*
 		         , (unsigned long)temp_host->last_time_up
 		         , (unsigned long)temp_host->last_time_down
 		         , (unsigned long)temp_host->last_time_unreachable
-		         , temp_host->state_type
-		         , (unsigned long)temp_host->last_host_notification
-		         , (unsigned long)temp_host->next_host_notification
-		         , temp_host->no_more_notifications
-		         , temp_host->notifications_enabled
-		         , temp_host->problem_has_been_acknowledged
-		         , temp_host->acknowledgement_type
-		         , temp_host->current_notification_number
-		         , temp_host->accept_passive_host_checks
-		         , temp_host->event_handler_enabled
-		         , temp_host->checks_enabled
-		         , temp_host->flap_detection_enabled
-		         , temp_host->is_flapping
 		         , temp_host->percent_state_change
 		         , temp_host->latency
 		         , temp_host->execution_time
-		         , temp_host->scheduled_downtime_depth
-		         , temp_host->failure_prediction_enabled
-		         , temp_host->process_performance_data
-		         , temp_host->obsess_over_host
-		         , temp_host->modified_attributes
-		         , (es[4] == NULL) ? "" : es[4]
-		         , (es[5] == NULL) ? "" : es[5]
-		         , (double)temp_host->check_interval
-		         , (double)retry_interval
-		         , (es[6] == NULL) ? "" : es[6]
-		        );
+*/
 
-		    temp_buffer[sizeof(temp_buffer)-1] = '\x0';
-
-		    /* dump customvars status */
-/*		    if (dump_customvar_status == IDO_TRUE) {
-			for (temp_customvar = temp_host->custom_variables; temp_customvar != NULL; temp_customvar = temp_customvar->next) {
-
-			    for (x = 0; x < 2; x++) {
-				free(es[x]);
-				es[x] = NULL;
-			    }
-
-			    es[0] = escape_buffer(temp_customvar->variable_name);
-			    es[1] = escape_buffer(temp_customvar->variable_value);
-
-			    snprintf(temp_buffer, ID2SC_MAX_BUFLEN - 1
-			         , "%d=%s:%d:%s\n"
-			         , IDO_DATA_CUSTOMVARIABLESTATUS
-			         , (es[0] == NULL) ? "" : es[0]
-			         , temp_customvar->has_been_modified
-			         , (es[1] == NULL) ? "" : es[1]
-			        );
-
-			    temp_buffer[sizeof(temp_buffer)-1] = '\x0';
-			}
+		    if (!strcmp(debug, "on")) {
+			snprintf(temp_buffer, sizeof(temp_buffer) - 1, "HOST_STATUS: %s :: %s :: %s :: %s\n", es[0], es[1], es[3], es[5]);
+			temp_buffer[sizeof(temp_buffer)-1] = '\x0';
+			id2sc_write_to_log(temp_buffer);
 		    }
 
-		    snprintf(temp_buffer, MAX_BUFLEN - 1
-		         , "%d\n\n"
-		         , IDO_API_ENDDATA
-		        );
-
-		    temp_buffer[sizeof(temp_buffer)-1] = '\x0';
-*/		
-		    id2sc_write_to_log(temp_buffer);
 		}
 		
 		break;
@@ -559,6 +627,7 @@ int id2sc_handle_data(int event_type, void *data) {
 		}
 
 		break;
+
 	default:
 		break;
 	}
@@ -858,17 +927,27 @@ int process_config_var(char *arg) {
 	    return process_config_file(val);
 	} else if (!strcmp(var, "pg.url")) {
 	    pgurl = strdup(val);
-	    snprintf(temp_buffer, sizeof(temp_buffer) - 1, "id2sc: pg.url = '%s'\n", pgurl);
+	    snprintf(temp_buffer, sizeof(temp_buffer) - 1, "id2sc: Parameter->pg.url = '%s'\n", pgurl);
 	    temp_buffer[sizeof(temp_buffer)-1] = '\x0';
 	    write_to_all_logs(temp_buffer, NSLOG_INFO_MESSAGE);
 	} else if (!strcmp(var, "id.name")) {
 	    idname = strdup(val);
-	    snprintf(temp_buffer, sizeof(temp_buffer) - 1, "id2sc: id.name = '%s'\n", idname);
+	    snprintf(temp_buffer, sizeof(temp_buffer) - 1, "id2sc: Parameter->id.name = '%s'\n", idname);
+	    temp_buffer[sizeof(temp_buffer)-1] = '\x0';
+	    write_to_all_logs(temp_buffer, NSLOG_INFO_MESSAGE);
+	} else if (!strcmp(var, "id.idtf")) {
+	    identifier = strdup(val);
+	    snprintf(temp_buffer, sizeof(temp_buffer) - 1, "id2sc: Parameter->id.idtf = '%s'\n", identifier);
 	    temp_buffer[sizeof(temp_buffer)-1] = '\x0';
 	    write_to_all_logs(temp_buffer, NSLOG_INFO_MESSAGE);
 	} else if (!strcmp(var, "lg.file")) {
 	    lgfile = strdup(val);
-	    snprintf(temp_buffer, sizeof(temp_buffer) - 1, "id2sc: lg.file = '%s'\n", lgfile);
+	    snprintf(temp_buffer, sizeof(temp_buffer) - 1, "id2sc: Parameter->lg.file = '%s'\n", lgfile);
+	    temp_buffer[sizeof(temp_buffer)-1] = '\x0';
+	    write_to_all_logs(temp_buffer, NSLOG_INFO_MESSAGE);
+	} else if (!strcmp(var, "debug")) {
+	    debug = strdup(val);
+	    snprintf(temp_buffer, sizeof(temp_buffer) - 1, "id2sc: Parameter->debug = '%s'\n", debug);
 	    temp_buffer[sizeof(temp_buffer)-1] = '\x0';
 	    write_to_all_logs(temp_buffer, NSLOG_INFO_MESSAGE);
 	} else {

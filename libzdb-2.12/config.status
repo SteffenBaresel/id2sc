@@ -437,7 +437,7 @@ Copyright (C) 2012 Free Software Foundation, Inc.
 This config.status script is free software; the Free Software Foundation
 gives unlimited permission to copy, distribute and modify it."
 
-ac_pwd='/usr/local/icinga/source/id2sc/libzdb'
+ac_pwd='/usr/local/icinga/source/id2sc/libzdb-2.12'
 srcdir='.'
 INSTALL='/usr/bin/install -c'
 MKDIR_P='/bin/mkdir -p'
@@ -903,12 +903,12 @@ S["mkdir_p"]="$(MKDIR_P)"
 S["MKDIR_P"]="/bin/mkdir -p"
 S["INSTALL_STRIP_PROGRAM"]="$(install_sh) -c -s"
 S["STRIP"]="strip"
-S["install_sh"]="${SHELL} /usr/local/icinga/source/id2sc/libzdb/config/install-sh"
-S["MAKEINFO"]="${SHELL} /usr/local/icinga/source/id2sc/libzdb/config/missing makeinfo"
-S["AUTOHEADER"]="${SHELL} /usr/local/icinga/source/id2sc/libzdb/config/missing autoheader"
-S["AUTOMAKE"]="${SHELL} /usr/local/icinga/source/id2sc/libzdb/config/missing automake-1.14"
-S["AUTOCONF"]="${SHELL} /usr/local/icinga/source/id2sc/libzdb/config/missing autoconf"
-S["ACLOCAL"]="${SHELL} /usr/local/icinga/source/id2sc/libzdb/config/missing aclocal-1.14"
+S["install_sh"]="${SHELL} /usr/local/icinga/source/id2sc/libzdb-2.12/config/install-sh"
+S["MAKEINFO"]="${SHELL} /usr/local/icinga/source/id2sc/libzdb-2.12/config/missing makeinfo"
+S["AUTOHEADER"]="${SHELL} /usr/local/icinga/source/id2sc/libzdb-2.12/config/missing autoheader"
+S["AUTOMAKE"]="${SHELL} /usr/local/icinga/source/id2sc/libzdb-2.12/config/missing automake-1.14"
+S["AUTOCONF"]="${SHELL} /usr/local/icinga/source/id2sc/libzdb-2.12/config/missing autoconf"
+S["ACLOCAL"]="${SHELL} /usr/local/icinga/source/id2sc/libzdb-2.12/config/missing aclocal-1.14"
 S["VERSION"]="2.12"
 S["PACKAGE"]="libzdb"
 S["CYGPATH_W"]="echo"

@@ -174,12 +174,12 @@ configure:4367: checking lex output file root
 configure:4381: result: lex.yy
 configure:4386: checking lex library
 configure:4400: gcc -o conftest -g -O2   conftest.c   >&5
-/tmp/cckTmRqy.o: In function `input':
-/usr/local/icinga/source/id2sc/libzdb/lex.yy.c:1169: undefined reference to `yywrap'
-/tmp/cckTmRqy.o: In function `yylex':
-/usr/local/icinga/source/id2sc/libzdb/lex.yy.c:868: undefined reference to `yywrap'
-/tmp/cckTmRqy.o: In function `main':
-/usr/local/icinga/source/id2sc/libzdb/conftest.l:18: undefined reference to `yywrap'
+/tmp/cc1TM74A.o: In function `input':
+/usr/local/icinga/source/id2sc/libzdb-2.12/lex.yy.c:1169: undefined reference to `yywrap'
+/tmp/cc1TM74A.o: In function `yylex':
+/usr/local/icinga/source/id2sc/libzdb-2.12/lex.yy.c:868: undefined reference to `yywrap'
+/tmp/cc1TM74A.o: In function `main':
+/usr/local/icinga/source/id2sc/libzdb-2.12/conftest.l:18: undefined reference to `yywrap'
 collect2: ld returned 1 exit status
 configure:4400: $? = 1
 configure: failed program was:
@@ -2145,8 +2145,8 @@ configure:11743: checking whether to build static libraries
 configure:11747: result: yes
 configure:12030: checking for library containing pthread_create
 configure:12061: gcc -o conftest -g -O2   conftest.c  >&5
-/tmp/cckLwCvF.o: In function `main':
-/usr/local/icinga/source/id2sc/libzdb/conftest.c:35: undefined reference to `pthread_create'
+/tmp/ccpnWVuC.o: In function `main':
+/usr/local/icinga/source/id2sc/libzdb-2.12/conftest.c:35: undefined reference to `pthread_create'
 collect2: ld returned 1 exit status
 configure:12061: $? = 1
 configure: failed program was:
@@ -2193,8 +2193,8 @@ configure:12061: $? = 0
 configure:12078: result: -lpthread
 configure:12088: checking for library containing crypt
 configure:12119: gcc -o conftest -g -O2   conftest.c -lpthread  >&5
-/tmp/ccgl7AlN.o: In function `main':
-/usr/local/icinga/source/id2sc/libzdb/conftest.c:35: undefined reference to `crypt'
+/tmp/ccp2iOlK.o: In function `main':
+/usr/local/icinga/source/id2sc/libzdb-2.12/conftest.c:35: undefined reference to `crypt'
 collect2: ld returned 1 exit status
 configure:12119: $? = 1
 configure: failed program was:
@@ -2496,7 +2496,7 @@ lt_cv_to_tool_file_cmd=func_convert_file_noop
 ## Output variables. ##
 ## ----------------- ##
 
-ACLOCAL='${SHELL} /usr/local/icinga/source/id2sc/libzdb/config/missing aclocal-1.14'
+ACLOCAL='${SHELL} /usr/local/icinga/source/id2sc/libzdb-2.12/config/missing aclocal-1.14'
 AMDEPBACKSLASH='\'
 AMDEP_FALSE='#'
 AMDEP_TRUE=''
@@ -2506,9 +2506,9 @@ AM_DEFAULT_V='$(AM_DEFAULT_VERBOSITY)'
 AM_DEFAULT_VERBOSITY='1'
 AM_V='$(V)'
 AR='ar'
-AUTOCONF='${SHELL} /usr/local/icinga/source/id2sc/libzdb/config/missing autoconf'
-AUTOHEADER='${SHELL} /usr/local/icinga/source/id2sc/libzdb/config/missing autoheader'
-AUTOMAKE='${SHELL} /usr/local/icinga/source/id2sc/libzdb/config/missing automake-1.14'
+AUTOCONF='${SHELL} /usr/local/icinga/source/id2sc/libzdb-2.12/config/missing autoconf'
+AUTOHEADER='${SHELL} /usr/local/icinga/source/id2sc/libzdb-2.12/config/missing autoheader'
+AUTOMAKE='${SHELL} /usr/local/icinga/source/id2sc/libzdb-2.12/config/missing automake-1.14'
 AWK='gawk'
 CC='gcc'
 CCDEPMODE='depmode=none'
@@ -2545,7 +2545,7 @@ LIBTOOL='$(SHELL) $(top_builddir)/libtool'
 LIPO=''
 LN_S='ln -s'
 LTLIBOBJS=''
-MAKEINFO='${SHELL} /usr/local/icinga/source/id2sc/libzdb/config/missing makeinfo'
+MAKEINFO='${SHELL} /usr/local/icinga/source/id2sc/libzdb-2.12/config/missing makeinfo'
 MANIFEST_TOOL=':'
 MKDIR_P='/bin/mkdir -p'
 MYSQLCONFIG=''
@@ -2618,7 +2618,7 @@ host_vendor='unknown'
 htmldir='${docdir}'
 includedir='${prefix}/include'
 infodir='${datarootdir}/info'
-install_sh='${SHELL} /usr/local/icinga/source/id2sc/libzdb/config/install-sh'
+install_sh='${SHELL} /usr/local/icinga/source/id2sc/libzdb-2.12/config/install-sh'
 libdir='${exec_prefix}/lib'
 libexecdir='${exec_prefix}/libexec'
 localedir='${datarootdir}/locale'
