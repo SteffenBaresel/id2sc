@@ -226,6 +226,16 @@ int id2sc_handle_data(int event_type, void *data) {
 	char *es[9];
 	int last_state = -1;
 	int last_hard_state = -1;
+	char *array[10];
+	char *keyval[10];
+	char *values[10];
+	int i;
+	int j;
+	int k;
+//	int l;
+	int m;
+//	int n;
+
 //	int x = 0;
 //	customvariablesmember *temp_customvar = NULL;
 
@@ -318,29 +328,37 @@ int id2sc_handle_data(int event_type, void *data) {
 			    PreparedStatement_setInt(ihpd, 8, timestamp);
 			    PreparedStatement_execute(ihpd);
 			}
-			/* Get Durations */
-			int next_check=0;
-			switch (temp_service->next_check) {
-			    case 0:
-				next_check = timestamp;
-				break;
-			    default:
-				next_check = temp_service->next_check;
-				break;
+			/* Check if Passiv Check */
+			int next_check=0; int last_check=0;
+			if (temp_service->check_type == 0) {
+			    next_check = temp_service->next_check;
+			    last_check = temp_service->last_check;
+			} else {
+			    PreparedStatement_T slac2 = Connection_prepareStatement(con, "SELECT created FROM monitoring_availability WHERE srvid=? ORDER BY 1 DESC LIMIT 1");
+			    PreparedStatement_setInt(slac2, 1, srvid);
+			    ResultSet_T instanceS = PreparedStatement_executeQuery(slac2);
+			    if (ResultSet_next(instanceS)) {
+			        next_check = timestamp;
+			        last_check = ResultSet_getIntByName(instanceS, "created");
+			    } else {
+			        next_check = temp_service->last_check;
+			        last_check = temp_service->last_check;
+			    }
 			}
+			/* Get Durations */
 			int timeok=0; int timewa=0; int timecr=0; int timeun=0;
 			switch (temp_service->current_state) {
 			    case 0:
-				timeok = next_check - temp_service->last_check;
+				timeok = next_check - last_check;
 				break;
 			    case 1:
-				timewa = next_check - temp_service->last_check;
+				timewa = next_check - last_check;
 				break;
 			    case 2:
-				timecr = next_check - temp_service->last_check;
+				timecr = next_check - last_check;
 				break;
 			    case 3:
-				timeun = next_check - temp_service->last_check;
+				timeun = next_check - last_check;
 				break;
 			    default:
 				break;
@@ -362,6 +380,44 @@ int id2sc_handle_data(int event_type, void *data) {
 			    PreparedStatement_setInt(ihad, 6, timestamp);
 			    PreparedStatement_execute(ihad);
 			}
+			/* Performance Data */
+			if(es[4] != NULL) {
+			    if (strlen(es[4])>5) {
+				i=0;
+				/* 1. Step: Split ' ' */
+				array[i] = strtok(es[4], " ");
+				while(array[i]!=NULL) {
+				    array[++i] = strtok(NULL," ");
+				}
+				for (j=0;j<100;j++) {
+				    k=0;
+				    /* 2. Step: Split '=' */
+				    keyval[k] = strtok(array[j],"=");
+				    while(keyval[k]!=NULL) {
+					keyval[++k] = strtok(NULL,"=");
+				    }
+				    m=0;
+				    /* 3. Step: Split Value ';' */
+				    values[m] = strtok(keyval[1],";");
+				    while(values[m]!=NULL) {
+					values[++m] = strtok(NULL,";");
+				    }
+				
+				    /* Output Data */
+				    if (strstr(es[1], "FILESYSTEM_I/O") != NULL) {
+					snprintf(temp_buffer, sizeof(temp_buffer) - 1, ">> PERF_DATA: %d :: %d :: FS_IO :: %s :: %s\n", hstid, srvid, keyval[0], values[0]);
+					temp_buffer[sizeof(temp_buffer)-1] = '\x0';
+					id2sc_write_to_log(temp_buffer);
+				    } else if (strstr(es[1], "FILESYSTEM_") != NULL) {
+					snprintf(temp_buffer, sizeof(temp_buffer) - 1, ">> PERF_DATA: %d :: %d :: FS_LW %s :: %s :: %s \n", hstid, srvid, keyval[0], values[0], values[4]);
+					temp_buffer[sizeof(temp_buffer)-1] = '\x0';
+					id2sc_write_to_log(temp_buffer);
+				    }
+				
+				    if(array[j+1]==NULL) { break; }
+				}
+			    }
+			}
 		    } CATCH(SQLException) {
 			snprintf(temp_buffer, sizeof(temp_buffer) - 1, "id2sc: NEBCALLBACK_SERVICE_STATUS_DATA SQLException - %s\n", Exception_frame.message);
 			temp_buffer[sizeof(temp_buffer)-1] = '\x0';
@@ -371,7 +427,7 @@ int id2sc_handle_data(int event_type, void *data) {
 		    } END_TRY;
 
 		    if (!strcmp(debug, "on")) {
-			snprintf(temp_buffer, sizeof(temp_buffer) - 1, "SERVICE_STATUS: %s :: %s :: %s :: %s\n", es[0], es[1], es[2], es[4]);
+			snprintf(temp_buffer, sizeof(temp_buffer) - 1, "SERVICE_STATUS: %s :: %s :: %s :: %s :: %d\n", es[0], es[1], es[2], es[4], temp_service->check_type);
 			temp_buffer[sizeof(temp_buffer)-1] = '\x0';
 			id2sc_write_to_log(temp_buffer);
 		    }
